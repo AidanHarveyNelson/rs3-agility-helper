@@ -1,4 +1,5 @@
--- Agility Helper: highlights the next obstacle to click on an agility course.
+-- Agility Helper: highlights the next obstacle to click on an agility course
+-- and tracks laps.
 --
 -- A course loads when the player comes within LOAD_RANGE tiles of its start
 -- and unloads beyond UNLOAD_RANGE. While loaded, progress is tracked in two
@@ -6,8 +7,12 @@
 --   1. Clicking a course obstacle marks it as pending.
 --   2. The next Agility XP gain confirms it and moves the highlight on.
 -- The lap-completion bonus arrives with nothing pending, so it is ignored.
+-- A lap runs from the click on the first obstacle to the XP for the last.
 
 local const = require("constants")
+local panel = require("ui")
+-- The API also has a global named ui; make sure require found our file.
+assert(type(panel) == "table" and panel.create, "require(\"ui\") did not load ui.lua")
 
 -- Plugins can't write files, so the console is the only log.
 local function debugLog(fmt, ...)
@@ -27,6 +32,10 @@ local course = nil       -- active.data, the loaded course's obstacles and route
 local route = nil        -- route being followed on the loaded course
 local nextIndex = 1      -- position in route of the obstacle to highlight
 local pendingIndex = nil -- clicked obstacle waiting for its XP drop
+
+local tick = 0           -- ServerLogic events since load, for lap times
+local pendingTick = nil  -- tick of the pending click
+local lapStartTick = nil -- tick the current lap started, nil between laps
 
 -- Menu text can carry colour tags such as "<col=00ffff>".
 local function stripTags(text)
@@ -56,6 +65,12 @@ local function distanceToStart(data, self)
     return tileDistance(self.coordGrid, start.spots[1].x, start.spots[1].z)
 end
 
+local function routeName(r)
+    for name, candidate in pairs(course.routes) do
+        if candidate == r then return name end
+    end
+end
+
 local function defaultRoute()
     local level = Player.GetLevelGameplay(const.AGILITY_SKILL_ID)
     local best
@@ -65,6 +80,44 @@ local function defaultRoute()
         end
     end
     return best
+end
+
+-- Lap stats --------------------------------------------------------------
+
+-- Saved per character, so the database key starts with the display name.
+-- Laps are counted per course; the fastest lap is kept per route.
+local playerName = nil
+local laps = 0
+
+local function statKey(...)
+    return table.concat({ playerName, ... }, "/")
+end
+
+local function showStats()
+    panel.setLaps(laps)
+    panel.setFastest(route and PersistentDB:GetInt(statKey(active.file, routeName(route), "fastest")))
+end
+
+local function loadStats(self)
+    playerName = self.displayName
+    laps = PersistentDB:GetInt(statKey(active.file, "laps")) or 0
+    showStats()
+end
+
+local function completeLap()
+    local ticks = tick - lapStartTick
+    lapStartTick = nil
+    laps = laps + 1
+    PersistentDB:SetInt(statKey(active.file, "laps"), laps)
+
+    local fastestKey = statKey(active.file, routeName(route), "fastest")
+    local fastest = PersistentDB:GetInt(fastestKey)
+    if not fastest or ticks < fastest then
+        PersistentDB:SetInt(fastestKey, ticks)
+    end
+    debugLog("lap: %d done in %d ticks", laps, ticks)
+    showStats()
+    panel.setCurrent(nil)
 end
 
 -- Click matching -----------------------------------------------------------
@@ -302,11 +355,15 @@ end
 
 -- Loading courses ----------------------------------------------------------
 
-local function loadCourse(file)
+local function loadCourse(file, self)
     active = courses[file]
     active.file = file
     course = active.data
     route, nextIndex, pendingIndex = defaultRoute(), 1, nil
+    lapStartTick = nil
+    loadStats(self)
+    panel.setCurrent(nil)
+    panel.show(true)
     debugLog("course: loaded %s", file)
 end
 
@@ -314,11 +371,12 @@ local function unloadCourse()
     debugLog("course: unloaded %s", active.file)
     destroyOutlines()
     foundCoords = {}
-    active, course, route, pendingIndex = nil, nil, nil, nil
+    panel.show(false)
+    active, course, route, pendingIndex, lapStartTick = nil, nil, nil, nil, nil
 end
 
 -- Loads the first course within LOAD_RANGE of its start, and unloads the
--- loaded one beyond UNLOAD_RANGE (highlights removed).
+-- loaded one beyond UNLOAD_RANGE.
 local function updateLoadedCourse(self)
     if active then
         if distanceToStart(course, self) > const.UNLOAD_RANGE then unloadCourse() end
@@ -327,7 +385,7 @@ local function updateLoadedCourse(self)
     for _, file in ipairs(const.COURSES) do
         local distance = distanceToStart(courses[file].data, self)
         if distance and distance <= const.LOAD_RANGE then
-            loadCourse(file)
+            loadCourse(file, self)
             return
         end
     end
@@ -351,7 +409,11 @@ Event.MiniMenuEntrySelected.Subscribe("agilityHelperClick", function(event)
     local r, i = matchObstacle(name, verb, loc.coordGridX, loc.coordGridZ)
     debugLog("click: %s", r and ("matched step " .. i) or "no match")
     if r then
-        route, pendingIndex = r, i
+        if r ~= route then
+            route = r
+            showStats()
+        end
+        pendingIndex, pendingTick = i, tick
     end
 end)
 
@@ -361,6 +423,11 @@ Event.SkillTransmit.Subscribe("agilityHelperXp", function(event)
     if event.skill ~= const.AGILITY_SKILL_ID or not pendingIndex then return end
     if event.newXP <= event.oldXP then return end
 
+    if pendingIndex == 1 then
+        lapStartTick = pendingTick
+    elseif pendingIndex == #route.steps and lapStartTick then
+        completeLap()
+    end
     nextIndex = pendingIndex % #route.steps + 1
     pendingIndex = nil
     debugLog("xp: advanced to step %d", nextIndex)
@@ -368,18 +435,29 @@ Event.SkillTransmit.Subscribe("agilityHelperXp", function(event)
 end)
 
 Event.ServerLogic.Subscribe("agilityHelperTick", function()
+    tick = tick + 1
     local self = getSelf()
     if self then updateLoadedCourse(self) end
     if not active then return end
 
+    if lapStartTick then panel.setCurrent(tick - lapStartTick) end
     refreshHighlight(self)
 end)
 
+-- A broken panel shouldn't stop the highlights, so log the error and go on
+-- without it.
+local ok, err = pcall(panel.create)
+if not ok then
+    print("Agility Helper: lap panel unavailable: " .. tostring(err))
+    panel.destroy()
+end
+
 -- Called by the client when the plugin is disabled or reloaded, so a reload
--- starts without the previous load's outlines and subscriptions.
+-- starts without the previous load's outlines, panel and subscriptions.
 -- Must be global for the client to find it.
 function PluginShutdown()
     destroyOutlines()
+    panel.destroy()
     Event.MiniMenuEntrySelected.Unsubscribe("agilityHelperClick")
     Event.SkillTransmit.Unsubscribe("agilityHelperXp")
     Event.ServerLogic.Unsubscribe("agilityHelperTick")

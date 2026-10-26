@@ -4,7 +4,7 @@ return {
     -- for filling in course data. Set false before submitting.
     RECORD_MODE = true,
 
-    -- Print progress (outlines, XP, clicks) to the console. Set false
+    -- Print progress (outlines, XP, clicks, laps) to the console. Set false
     -- before submitting.
     DEBUG = true,
 
@@ -14,7 +14,8 @@ return {
 
     -- Courses to load, as file names in courses/ and models/. A course loads
     -- within LOAD_RANGE tiles of its start obstacle and unloads (highlights
-    -- removed) beyond UNLOAD_RANGE; the gap stops it flickering at the edge.
+    -- removed, panel hidden) beyond UNLOAD_RANGE; the gap stops it flickering
+    -- at the edge.
     -- Courses whose start isn't recorded yet are skipped.
     COURSES = {
         "gnome_stronghold", "burthorpe", "agility_pyramid", "penguin",
@@ -25,6 +26,7 @@ return {
     UNLOAD_RANGE = 75,
 
     AGILITY_SKILL_ID = 16,
+    TICK_SECONDS = 0.6, -- one ServerLogic event per game tick
 
     -- Highlights
     HIGHLIGHT_COLOUR = 0x00FF00FF, -- RGBA
@@ -34,4 +36,10 @@ return {
     DEFAULT_BOX_HEIGHT = 512, -- fine units, for obstacles without a model or height
     SEARCH_RANGE = 30, -- tiles to search for an obstacle with no recorded spots
     MATCH_RANGE = 2, -- tiles around a recorded spot that still match a click
+
+    -- Lap panel, in interface units; the position is a fraction of the game window.
+    PANEL_WIDTH = 200,
+    PANEL_HEIGHT = 90,
+    PANEL_X = 0.75,
+    PANEL_Y = 0.1,
 }
