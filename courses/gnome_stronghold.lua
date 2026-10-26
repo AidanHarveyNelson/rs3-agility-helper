@@ -91,9 +91,7 @@ return {
         },
     },
 
-    -- The course starts within activateRange tiles of the start obstacle's
-    -- first spot and stops beyond deactivateRange.
+    -- The course loads near this obstacle's first spot (see LOAD_RANGE in
+    -- constants.lua).
     start = "log_balance",
-    activateRange = 10,
-    deactivateRange = 100,
 }

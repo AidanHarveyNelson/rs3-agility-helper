@@ -1,38 +1,30 @@
 -- Agility Helper: highlights the next obstacle to click on an agility course.
 --
--- Progress is tracked in two steps so misclicks don't advance the course:
+-- A course loads when the player comes within LOAD_RANGE tiles of its start
+-- and unloads beyond UNLOAD_RANGE. While loaded, progress is tracked in two
+-- steps so misclicks don't advance the course:
 --   1. Clicking a course obstacle marks it as pending.
 --   2. The next Agility XP gain confirms it and moves the highlight on.
 -- The lap-completion bonus arrives with nothing pending, so it is ignored.
 
-local course = require("courses/gnome_stronghold")
-local models = require("models/gnome_stronghold") -- generated outlines of obstacle models
-
--- Print every loc click as "name/verb: x, z, level" for filling in course data.
-local RECORD_MODE = true
-
--- Highlight obstacles without recorded coords at the nearest loc with a
--- matching name. Off while recorded coords cover the course.
-local NAME_SEARCH = false
-
--- Print progress (outlines, XP, clicks) to the console. Set false before submitting.
-local DEBUG = true
-
-local AGILITY_SKILL_ID = 16
-local HIGHLIGHT_COLOUR = 0x00FF00FF
-local SEARCH_RANGE = 30 -- tiles to search for an obstacle with no recorded coords
-local TILE_SIZE = 512 -- fine units per tile
-local DEFAULT_BOX_HEIGHT = 512 -- fine units, for obstacles without a height
-local MATCH_RANGE = 2 -- tiles around a recorded spot that still match a click
+local const = require("constants")
 
 -- Plugins can't write files, so the console is the only log.
 local function debugLog(fmt, ...)
-    if DEBUG then print(string.format(fmt, ...)) end
+    if const.DEBUG then print(string.format(fmt, ...)) end
 end
 
 debugLog("Agility Helper loaded")
 
-local route = nil        -- active route from the course file, nil when off-course
+-- Every course with its generated model outlines, keyed by file name.
+local courses = {}
+for _, file in ipairs(const.COURSES) do
+    courses[file] = { data = require("courses/" .. file), models = require("models/" .. file) }
+end
+
+local active = nil       -- loaded course from courses, nil when away from all courses
+local course = nil       -- active.data, the loaded course's obstacles and routes
+local route = nil        -- route being followed on the loaded course
 local nextIndex = 1      -- position in route of the obstacle to highlight
 local pendingIndex = nil -- clicked obstacle waiting for its XP drop
 
@@ -56,8 +48,16 @@ local function getSelf()
     return nil
 end
 
+-- Tiles from the player to a course's start obstacle, or nil if its spots
+-- aren't recorded yet.
+local function distanceToStart(data, self)
+    local start = data.start and data.obstacles[data.start]
+    if not start or not start.spots then return nil end
+    return tileDistance(self.coordGrid, start.spots[1].x, start.spots[1].z)
+end
+
 local function defaultRoute()
-    local level = Player.GetLevelGameplay(AGILITY_SKILL_ID)
+    local level = Player.GetLevelGameplay(const.AGILITY_SKILL_ID)
     local best
     for _, r in pairs(course.routes) do
         if level >= r.minLevel and (not best or r.minLevel > best.minLevel) then
@@ -67,13 +67,16 @@ local function defaultRoute()
     return best
 end
 
+-- Click matching -----------------------------------------------------------
+
 -- A click counts for an obstacle when it lands within MATCH_RANGE tiles of
 -- any of its spots' boxes, which also covers spots not recorded yet next to
 -- recorded ones (the nets come in rows).
 local function nearObstacle(o, x, z)
+    local range = const.MATCH_RANGE
     for _, spot in ipairs(o.spots) do
-        if x >= spot.x - MATCH_RANGE and x <= spot.x + (o.width or 1) - 1 + MATCH_RANGE
-            and z >= spot.z - MATCH_RANGE and z <= spot.z + (o.length or 1) - 1 + MATCH_RANGE then
+        if x >= spot.x - range and x <= spot.x + (o.width or 1) - 1 + range
+            and z >= spot.z - range and z <= spot.z + (o.length or 1) - 1 + range then
             return true
         end
     end
@@ -101,9 +104,10 @@ local function matchObstacle(name, verb, x, z)
     return nil
 end
 
--- The CoordGrids of each obstacle's spots, created once and kept for the
--- plugin's lifetime. Name-search results are copied rather than holding on
--- to the loc's.
+-- Locating obstacles -------------------------------------------------------
+
+-- The CoordGrids of each obstacle's spots, created once per load. Name-search
+-- results are copied rather than holding on to the loc's.
 local foundCoords = {}
 local lastSearchCount = nil
 
@@ -119,13 +123,13 @@ local function locateObstacle(obstacle, self)
         foundCoords[obstacle] = coords
         return coords
     end
-    if not NAME_SEARCH then return nil end
+    if not const.NAME_SEARCH then return nil end
 
     local best, bestDistance
     local locs = LocList.Filter({
         name = obstacle.name,
         coordGrid = self.coordGrid,
-        range = SEARCH_RANGE,
+        range = const.SEARCH_RANGE,
         sameLevel = false,
     })
     for _, loc in ipairs(locs) do
@@ -162,13 +166,15 @@ local function printLocShape(name, x, z, level)
     end
 end
 
+-- Highlight shapes ---------------------------------------------------------
+
 -- Wireframe box covering width x length tiles from the outline's tile (the
 -- obstacle's south-west corner), height in fine units. A height of 0 draws
 -- just the flat outline on the ground.
 local function makeBox(width, length, height)
-    local half = TILE_SIZE // 2 -- the outline is placed at the centre of its tile
-    local x0, x1 = -half, width * TILE_SIZE - half
-    local z0, z1 = -half, length * TILE_SIZE - half
+    local half = const.TILE_SIZE // 2 -- the outline is placed at the centre of its tile
+    local x0, x1 = -half, width * const.TILE_SIZE - half
+    local z0, z1 = -half, length * const.TILE_SIZE - half
     local positions = {
         Vector3.new(x0, 0, z0), Vector3.new(x1, 0, z0),
         Vector3.new(x1, 0, z1), Vector3.new(x0, 0, z1),
@@ -198,8 +204,8 @@ end
 -- and centred on its width x length footprint, whose south-west tile is the
 -- outline's tile.
 local function makeModelShape(model, rotation, width, length)
-    local offsetX = (width - 1) * TILE_SIZE / 2
-    local offsetZ = (length - 1) * TILE_SIZE / 2
+    local offsetX = (width - 1) * const.TILE_SIZE / 2
+    local offsetZ = (length - 1) * const.TILE_SIZE / 2
     local positions = {}
     for _, p in ipairs(model.positions) do
         local x, z = p[1], p[3]
@@ -228,9 +234,9 @@ local function createOutline(name, obstacle, coord)
     local width, length = obstacle.width or 1, obstacle.length or 1
     local shape
     if obstacle.model then
-        shape = makeModelShape(models[obstacle.model], obstacle.rotation or 0, width, length)
+        shape = makeModelShape(active.models[obstacle.model], obstacle.rotation or 0, width, length)
     else
-        shape = makeBox(width, length, obstacle.height or DEFAULT_BOX_HEIGHT)
+        shape = makeBox(width, length, obstacle.height or const.DEFAULT_BOX_HEIGHT)
     end
     local outline = ShapeList.CreateEntity(name)
     if not outline then return nil end
@@ -239,9 +245,8 @@ local function createOutline(name, obstacle, coord)
         return nil
     end
     outline.ignoreDepth = true
-    -- Model outlines have many more lines than boxes, so draw them thinner.
-    outline.lineWidth = obstacle.model and 2 or 4
-    outline.colour = HIGHLIGHT_COLOUR
+    outline.lineWidth = obstacle.model and const.MODEL_LINE_WIDTH or const.BOX_LINE_WIDTH
+    outline.colour = const.HIGHLIGHT_COLOUR
     outline.alignType = ShapeEntityAlignType.NONE
     outline.coordGrid = coord
     outline.visible = false
@@ -256,6 +261,15 @@ local function createOutlines(key, coords)
         if outline then table.insert(list, outline) end
     end
     return list
+end
+
+local function destroyOutlines()
+    for _, list in pairs(outlines) do
+        for _, outline in ipairs(list) do
+            if outline.isValid then outline:Destroy() end
+        end
+    end
+    outlines, shownKey = {}, nil
 end
 
 local function setVisible(key, visible)
@@ -286,22 +300,40 @@ local function refreshHighlight(self)
     showOutline(outlines[key] and key or nil)
 end
 
--- Starts the course near the first obstacle and stops it after leaving the
--- area. Only works once the first obstacle's spots are recorded; otherwise
--- the course starts on the first obstacle click.
-local function updateActivation(self)
-    local start = course.obstacles[course.start]
-    if not start.spots then return end
+-- Loading courses ----------------------------------------------------------
 
-    local distance = tileDistance(self.coordGrid, start.spots[1].x, start.spots[1].z)
-    if not route and distance <= course.activateRange then
-        route, nextIndex, pendingIndex = defaultRoute(), 1, nil
-        debugLog("course started, %d tiles from start", distance)
-    elseif route and distance > course.deactivateRange then
-        route, pendingIndex = nil, nil
-        debugLog("course stopped, %d tiles from start", distance)
+local function loadCourse(file)
+    active = courses[file]
+    active.file = file
+    course = active.data
+    route, nextIndex, pendingIndex = defaultRoute(), 1, nil
+    debugLog("course: loaded %s", file)
+end
+
+local function unloadCourse()
+    debugLog("course: unloaded %s", active.file)
+    destroyOutlines()
+    foundCoords = {}
+    active, course, route, pendingIndex = nil, nil, nil, nil
+end
+
+-- Loads the first course within LOAD_RANGE of its start, and unloads the
+-- loaded one beyond UNLOAD_RANGE (highlights removed).
+local function updateLoadedCourse(self)
+    if active then
+        if distanceToStart(course, self) > const.UNLOAD_RANGE then unloadCourse() end
+        return
+    end
+    for _, file in ipairs(const.COURSES) do
+        local distance = distanceToStart(courses[file].data, self)
+        if distance and distance <= const.LOAD_RANGE then
+            loadCourse(file)
+            return
+        end
     end
 end
+
+-- Events ---------------------------------------------------------------------
 
 Event.MiniMenuEntrySelected.Subscribe("agilityHelperClick", function(event)
     local loc = event.entry.locData
@@ -309,11 +341,12 @@ Event.MiniMenuEntrySelected.Subscribe("agilityHelperClick", function(event)
     if not loc or not self then return end
 
     local name, verb = stripTags(event.entry.subjectText), stripTags(event.entry.verbText)
-    if RECORD_MODE then
+    if const.RECORD_MODE then
         print(string.format("%s/%s: x = %d, z = %d, level = %d (player at %d, %d)",
             name, verb, loc.coordGridX, loc.coordGridZ, self.coordGrid.level, self.coordGrid.x, self.coordGrid.z))
         printLocShape(name, loc.coordGridX, loc.coordGridZ, self.coordGrid.level)
     end
+    if not active then return end
 
     local r, i = matchObstacle(name, verb, loc.coordGridX, loc.coordGridZ)
     debugLog("click: %s", r and ("matched step " .. i) or "no match")
@@ -325,7 +358,7 @@ end)
 Event.SkillTransmit.Subscribe("agilityHelperXp", function(event)
     debugLog("xp: skill = %d, %d -> %d", event.skill, event.oldXP, event.newXP)
     -- SkillType values are plain skill IDs.
-    if event.skill ~= AGILITY_SKILL_ID or not pendingIndex then return end
+    if event.skill ~= const.AGILITY_SKILL_ID or not pendingIndex then return end
     if event.newXP <= event.oldXP then return end
 
     nextIndex = pendingIndex % #route.steps + 1
@@ -334,11 +367,11 @@ Event.SkillTransmit.Subscribe("agilityHelperXp", function(event)
     refreshHighlight(getSelf())
 end)
 
--- Re-checked every server tick because locs found by name only exist once
--- they are loaded near the player.
 Event.ServerLogic.Subscribe("agilityHelperTick", function()
     local self = getSelf()
-    if self then updateActivation(self) end
+    if self then updateLoadedCourse(self) end
+    if not active then return end
+
     refreshHighlight(self)
 end)
 
@@ -346,11 +379,7 @@ end)
 -- starts without the previous load's outlines and subscriptions.
 -- Must be global for the client to find it.
 function PluginShutdown()
-    for _, list in pairs(outlines) do
-        for _, outline in ipairs(list) do
-            if outline.isValid then outline:Destroy() end
-        end
-    end
+    destroyOutlines()
     Event.MiniMenuEntrySelected.Unsubscribe("agilityHelperClick")
     Event.SkillTransmit.Unsubscribe("agilityHelperXp")
     Event.ServerLogic.Unsubscribe("agilityHelperTick")

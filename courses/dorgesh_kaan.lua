@@ -25,6 +25,4 @@ return {
 
     routes = {},
     start = nil,
-    activateRange = 10,
-    deactivateRange = 100,
 }

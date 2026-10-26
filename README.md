@@ -22,7 +22,7 @@ Ctrl+Shift+click to teleport.
 
 ## Recording course coordinates
 
-With `RECORD_MODE = true` in `main.lua`, every loc click prints a line like:
+With `RECORD_MODE = true` in `constants.lua`, every loc click prints a line like:
 
 ```
 >>Log balance/Walk-across: x = ..., z = ..., level = 0
@@ -38,6 +38,6 @@ first obstacle.
 ## Before submitting
 
 - Set a real `contactEmailAddress` in `plugin.json` (not your mod.io email).
-- Set `RECORD_MODE = false` and `DEBUG = false`.
+- Set `RECORD_MODE = false` and `DEBUG = false` in `constants.lua`.
 - Highlighting guidance falls under "subject to review" in the plugin
   guidelines; check on the Plugin Portal Discord first.
