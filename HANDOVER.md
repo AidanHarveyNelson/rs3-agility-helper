@@ -23,9 +23,9 @@ courses come later as extra data files in `courses/`.
 - API details used here:
   - `Event.X.Subscribe("name", fn)` / `Event.X.Unsubscribe("name")`
   - `Event.MiniMenuEntrySelected`: `event.entry.verbText`, `.subjectText`, `.locData` (`coordGridX`, `coordGridZ`, `config`; there is no entity field)
-  - `Event.SkillTransmit`: `skill` (SkillType), `oldXP`, `newXP`, `oldGameplayLevel`, `newGameplayLevel`
+  - `Event.SkillTransmit`: `skill` (SkillType: a plain integer ID, Agility = 16), `oldXP`, `newXP`, `oldGameplayLevel`, `newGameplayLevel`
   - `Event.ServerLogic` fires about every 600 ms. `Player.IsAvailable()`, `Player.GetEntity()` → `.coordGrid`, `.position`, `.isValid`
-  - `Player.GetLevelGameplay(SkillType)`, `SkillType.FromID(id)`
+  - `Player.GetLevelGameplay(skillId)`. `SkillType.FromID(id)` returns the skill name string, not something to pass to the API
   - `CoordGrid.new(level, msX, msZ, localX, localZ)`; properties `x`, `z`, `level` (world tiles; 64 tiles per map square)
   - `LocList.Filter{ name, coordGrid, range, sameLevel }` → LocEntity (`coordGrid`, `config`, `displayName`).
     Inactive locs are merged into static scenery and may NOT be returned.
@@ -50,14 +50,14 @@ courses come later as extra data files in `courses/`.
   - `RECORD_MODE = true` prints `name/verb: x, z, level` for every loc click.
 
 ## Unverified assumptions (check first on a dev world)
-1. `event.skill.id` exists and Agility's ID is 16.
-2. Gnome course obstacles are found by `LocList.Filter` by name.
-3. Menu `verbText` and `subjectText` match the wiki strings once colour tags are stripped.
-4. The highlight renders at the right place and height (`alignType` OBJECT, `ignoreDepth` true).
+1. ~~`event.skill.id` exists~~ Confirmed: `event.skill` is the integer ID itself, and Agility = 16.
+2. Name search via `LocList.Filter`: moving the highlight to a search result crashed the client (search alone did not). Disabled with `NAME_SEARCH = false`; use recorded coords instead.
+3. Menu `verbText` and `subjectText` match the wiki strings once colour tags are stripped (confirmed for the log balance).
+4. The highlight renders at recorded coords without crashing (`alignType` NONE, `ignoreDepth` true). Height not yet checked.
 
 ## Next steps
 1. Load on a dev world and run a lap with RECORD_MODE on.
 2. Paste the recorded coordinates into `courses/gnome_stronghold.lua` and fix any wrong assumptions above.
 3. Size the highlight per obstacle (the nets are multi-tile) and possibly preview the obstacle after next.
-4. Add a settings UI (toggle, colour) and more courses.
+4. Add a settings UI (toggle, colour) and more courses. UI tutorial: https://developer.runescape.com/rs/tutorial/2simpleui.html
 5. Before submitting: real contact email, RECORD_MODE off, ask on the Discord.

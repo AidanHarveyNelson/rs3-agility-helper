@@ -29,13 +29,15 @@ With `RECORD_MODE = true` in `main.lua`, every loc click prints a line like:
 ```
 
 Copy the values into the matching obstacle in `courses/gnome_stronghold.lua`
-(e.g. `{ name = "Log balance", verb = "Walk-across", x = ..., z = ..., level = 0 }`).
-Recorded coordinates make the highlight exact, let the two obstacle nets be
-told apart, and start the course automatically near the first obstacle.
+as a spot (e.g. `level = 0, spots = { { x = ..., z = ... } }`). Obstacles you
+can take at several places (the three nets in a row, the two pipes) list one
+spot per place. Recorded spots make the highlight exact, let the two sets of
+obstacle nets be told apart, and start the course automatically near the
+first obstacle.
 
 ## Before submitting
 
 - Set a real `contactEmailAddress` in `plugin.json` (not your mod.io email).
-- Set `RECORD_MODE = false`.
+- Set `RECORD_MODE = false` and `DEBUG = false`.
 - Highlighting guidance falls under "subject to review" in the plugin
   guidelines; check on the Plugin Portal Discord first.
